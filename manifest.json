@@ -1,0 +1,13 @@
+{
+    "name": "federation",
+    "version": "0.7.6",
+    "module": "federation",
+    "min_tmux_browse": "0.7.6",
+    "routes_entry": "server.routes:register",
+    "ui_blocks_path": "ui_blocks.html",
+    "static_dir": "static",
+    "startup_entry": "startup:register",
+    "state_paths": [
+        "paired-peers.json"
+    ]
+}
