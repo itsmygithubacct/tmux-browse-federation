@@ -12,9 +12,9 @@ What moved out of core:
 - `lib/federation/store.py` — paired-peers persistent store
   (now `federation/store.py` here).
 - `lib/server_routes/peers.py` — `/api/peers` and `/api/peers/pair-*`
-  HTTP handlers (now `server/routes.py` here).
+  HTTP handlers (now `federation/routes.py` here).
 - `lib/server.py::_fetch_peer_sessions` and `_merge_peer_sessions`
-  — peer fan-out and session merge (now `server/session_merge.py`
+  — peer fan-out and session merge (now `federation/session_merge.py`
   here).
 - `static/panes/federation.js` — Federation Config card UI
   (now `static/federation.js` here).

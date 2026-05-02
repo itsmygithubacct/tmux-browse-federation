@@ -16,7 +16,7 @@ from urllib.error import URLError
 
 # Layout: <core_repo>/extensions/federation/tests/test_federation.py
 # parents[3] is the core repo (so ``lib.*`` resolves);
-# parents[1] is the extension root (so ``federation``, ``server.*`` resolve).
+# parents[1] is the extension root (so ``federation`` and its submodules resolve).
 _REPO = Path(__file__).resolve().parents[3]
 _EXT = Path(__file__).resolve().parents[1]
 for _p in (_REPO, _EXT):
@@ -147,14 +147,14 @@ class FetchPeerSessionsTests(unittest.TestCase):
     """The urllib-based GET <peer>/api/sessions wrapper."""
 
     def test_url_error_returns_empty(self):
-        from server import session_merge
-        with mock.patch("server.session_merge.urllib.request.urlopen",
+        from federation import session_merge
+        with mock.patch("federation.session_merge.urllib.request.urlopen",
                          side_effect=URLError("boom")):
             rows = session_merge._fetch_peer_sessions("http://10.0.0.1:8096")
         self.assertEqual(rows, [])
 
     def test_well_formed_response_returns_rows(self):
-        from server import session_merge
+        from federation import session_merge
         body = json.dumps({"ok": True, "sessions": [
             {"name": "foo"}, {"name": "bar"},
         ]}).encode()
@@ -162,17 +162,17 @@ class FetchPeerSessionsTests(unittest.TestCase):
         fake.read.return_value = body
         fake.__enter__ = lambda self: self
         fake.__exit__ = lambda self, *a: False
-        with mock.patch("server.session_merge.urllib.request.urlopen", return_value=fake):
+        with mock.patch("federation.session_merge.urllib.request.urlopen", return_value=fake):
             rows = session_merge._fetch_peer_sessions("http://10.0.0.1:8096")
         self.assertEqual([r["name"] for r in rows], ["foo", "bar"])
 
     def test_malformed_json_returns_empty(self):
-        from server import session_merge
+        from federation import session_merge
         fake = mock.MagicMock()
         fake.read.return_value = b"not json{"
         fake.__enter__ = lambda self: self
         fake.__exit__ = lambda self, *a: False
-        with mock.patch("server.session_merge.urllib.request.urlopen", return_value=fake):
+        with mock.patch("federation.session_merge.urllib.request.urlopen", return_value=fake):
             rows = session_merge._fetch_peer_sessions("http://10.0.0.1:8096")
         self.assertEqual(rows, [])
 
@@ -269,7 +269,7 @@ class PairAcceptCallbackGuardTests(unittest.TestCase):
         self.fed_store.clear_all()
 
     def test_callback_without_outgoing_is_refused(self):
-        from server import routes as routes_peers
+        from federation import routes as routes_peers
 
         class FakeHandler:
             def __init__(self):
@@ -287,7 +287,7 @@ class PairAcceptCallbackGuardTests(unittest.TestCase):
         self.assertFalse(self.fed_store.is_paired("stranger"))
 
     def test_callback_with_outgoing_pairs(self):
-        from server import routes as routes_peers
+        from federation import routes as routes_peers
 
         class FakeHandler:
             def __init__(self):
@@ -321,7 +321,7 @@ class AggregationGatedOnPairing(unittest.TestCase):
         self.fed_store.clear_all()
 
     def test_unpaired_peer_skipped(self):
-        from server import session_merge
+        from federation import session_merge
         federation.upsert_peer(federation.PeerInfo(
             device_id="not-paired", hostname="x",
             dashboard_port=9999, scheme="http",
@@ -329,13 +329,13 @@ class AggregationGatedOnPairing(unittest.TestCase):
             addr="10.0.0.99",
         ))
         out: list[dict] = []
-        with mock.patch("server.session_merge._fetch_peer_sessions") as fake_fetch:
+        with mock.patch("federation.session_merge._fetch_peer_sessions") as fake_fetch:
             session_merge.merge_peer_sessions(out)
             fake_fetch.assert_not_called()
         self.assertEqual(out, [])
 
     def test_paired_peer_attempted(self):
-        from server import session_merge
+        from federation import session_merge
         federation.upsert_peer(federation.PeerInfo(
             device_id="paired-x", hostname="x",
             dashboard_port=9999, scheme="http",
@@ -344,7 +344,7 @@ class AggregationGatedOnPairing(unittest.TestCase):
         ))
         self.fed_store.add_paired("paired-x", "x")
         out: list[dict] = []
-        with mock.patch("server.session_merge._fetch_peer_sessions",
+        with mock.patch("federation.session_merge._fetch_peer_sessions",
                          return_value=[{"name": "remote-foo"}]) as fake_fetch:
             session_merge.merge_peer_sessions(out)
             fake_fetch.assert_called_once()

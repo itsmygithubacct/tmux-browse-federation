@@ -33,5 +33,5 @@ Homepage = "https://github.com/itsmygithubacct/tmux-browse-federation"
 Core = "https://github.com/itsmygithubacct/tmux-browse"
 
 [tool.setuptools.packages.find]
-include = ["federation*", "server*"]
+include = ["federation*"]
 exclude = ["tests*"]

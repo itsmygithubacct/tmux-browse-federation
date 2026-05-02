@@ -3,7 +3,7 @@
     "version": "0.7.6",
     "module": "federation",
     "min_tmux_browse": "0.7.6",
-    "routes_entry": "server.routes:register",
+    "routes_entry": "federation.routes:register",
     "ui_blocks_path": "ui_blocks.html",
     "static_dir": "static",
     "startup_entry": "startup:register",

@@ -15,17 +15,22 @@ machines on your LAN, this is what you want.
 ## What's in here
 
 - `federation/` — the importable package (`import federation`).
-  Modules own the peer registry, the UDP beacon broadcaster +
-  listener, and the persistent paired-peers store. Host identity
+  Owns the peer registry, the UDP beacon broadcaster + listener,
+  the persistent paired-peers store, the HTTP route handlers, and
+  the session post-processor that merges peer rows. Everything
+  scoped under one package name so two extensions can't collide
+  on a top-level module like ``server``. Host identity
   (`device_id` + short hostname) lives in core's
   `lib.host_identity` so the dashboard can tag local rows with
-  the same fields it tags remote rows even when this extension
-  is not installed.
-- `server/routes.py` — `/api/peers` + `/api/peers/pair-*` HTTP
-  handlers, registered through the core extension loader.
-- `server/session_merge.py` — fan-out to paired peers and merge
-  their `/api/sessions` rows into the local response. Wired in
-  via the `session_post_processors` hook.
+  the same fields it tags remote rows even when this extension is
+  not installed.
+- `federation/routes.py` — `/api/peers` + `/api/peers/pair-*`
+  HTTP handlers, registered through the core extension loader
+  (manifest's ``routes_entry: federation.routes:register``).
+- `federation/session_merge.py` — fan-out to paired peers and
+  merge their `/api/sessions` rows into the local response. Wired
+  in via the ``session_post_processors`` hook returned by
+  ``register()``.
 - `static/federation.js` — the Federation Config card UI: peer
   list, status badges, Accept / Decline / Pair / Unpair buttons.
 - `ui_blocks.html` — fills core's `<!--slot:config_post-->` with
