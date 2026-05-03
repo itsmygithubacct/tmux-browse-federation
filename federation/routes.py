@@ -36,7 +36,6 @@ to fan out to paired peers and append their rows.
 from __future__ import annotations
 
 import json
-import time
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
@@ -100,7 +99,6 @@ def h_peers(handler: "Handler", _parsed: ParseResult) -> None:
     # Paired peers we haven't seen lately. They still belong in the
     # list as "paired (offline)" so the operator can unpair them
     # without having to wait for a beacon.
-    now = int(time.time())  # noqa: F841 — kept for parity / potential future use
     for did, entry in paired.items():
         if did in seen:
             continue
