@@ -31,8 +31,8 @@ import threading
 import time
 from dataclasses import dataclass
 
-from lib import __version__
 from lib.host_identity import get_hostname, get_or_create_device_id  # noqa: F401
+from lib.version import __version__
 
 _log = logging.getLogger(__name__)
 

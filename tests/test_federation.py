@@ -15,11 +15,12 @@ from unittest import mock
 from urllib.error import URLError
 
 # Layout: <core_repo>/extensions/federation/tests/test_federation.py
-# parents[3] is the core repo (so ``lib.*`` resolves);
+# parents[3] is the host repo; its ``tmux-cli`` submodule provides
+# the core half of the ``lib`` namespace package;
 # parents[1] is the extension root (so ``federation`` and its submodules resolve).
 _REPO = Path(__file__).resolve().parents[3]
 _EXT = Path(__file__).resolve().parents[1]
-for _p in (_REPO, _EXT):
+for _p in (_REPO, _REPO / "tmux-cli", _EXT):
     _s = str(_p)
     if _s not in sys.path:
         sys.path.insert(0, _s)

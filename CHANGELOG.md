@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.7.6.1-federation — 2026-05-03
+
+- Removed an unused timestamp and its import from the peer-list route.
+- Corrected the core-version import for the split namespace package.
+- Made the documented host-checkout test command load the vendored core.
+
 ## v0.7.6-federation — 2026-05-02
 
 Initial release. Federation extracted from `tmux-browse` core into
