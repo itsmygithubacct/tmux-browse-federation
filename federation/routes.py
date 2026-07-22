@@ -20,6 +20,8 @@
 - ``POST /api/peers/unpair`` — operator action: remove a peer
   from our paired set (the other side is informed only by the
   next session-fetch failing, which is documented behavior).
+- ``POST /api/peers/proxy`` — relay an allowlisted session action
+  from the local browser to an online, paired peer.
 
 Pair-request/accept-callback handlers don't require the config-lock
 token because the request is itself a network operation that the
@@ -39,7 +41,7 @@ import json
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
-from urllib.parse import ParseResult
+from urllib.parse import ParseResult, urlsplit, urlunsplit
 
 import federation
 from federation import store as fed_store
@@ -55,6 +57,17 @@ if TYPE_CHECKING:
 # host. Kept tight so a stalled peer doesn't hang the operator's
 # Accept/Reject UI.
 _PAIR_REQ_TIMEOUT_SEC = 3.0
+
+_PROXY_POST_PATHS = frozenset({
+    "/api/ttyd/start",
+    "/api/ttyd/stop",
+    "/api/session/kill",
+    "/api/session/resize",
+    "/api/session/scroll",
+    "/api/session/zoom",
+    "/api/session/type",
+    "/api/session/key",
+})
 
 
 def _peer_status(device_id: str) -> str:
@@ -203,12 +216,24 @@ def h_pair_accept_callback(handler: "Handler", _parsed: ParseResult, body: dict)
 
 
 def _post_to_peer(base_url: str, path: str, payload: dict,
-                  timeout: float = _PAIR_REQ_TIMEOUT_SEC) -> tuple[bool, dict | None]:
+                  timeout: float = _PAIR_REQ_TIMEOUT_SEC,
+                  unlock_token: str | None = None) -> tuple[bool, dict | None]:
     """Best-effort POST helper; returns (ok, parsed_body)."""
+    try:
+        parsed_base = urlsplit(base_url)
+    except ValueError:
+        return False, None
+    if parsed_base.scheme not in {"http", "https"} or not parsed_base.hostname:
+        return False, None
     url = base_url.rstrip("/") + path
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
+    token = federation.get_dashboard_auth_token()
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    if unlock_token:
+        req.add_header("X-TB-Unlock-Token", unlock_token)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")
@@ -216,9 +241,85 @@ def _post_to_peer(base_url: str, path: str, payload: dict,
                 parsed = json.loads(raw)
             except ValueError:
                 parsed = None
-            return True, parsed
-    except (urllib.error.URLError, TimeoutError, OSError):
+            return True, parsed if isinstance(parsed, dict) else None
+    except urllib.error.HTTPError as exc:
+        try:
+            parsed = json.loads(exc.read().decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            parsed = None
+        return False, parsed if isinstance(parsed, dict) else None
+    except (urllib.error.URLError, TimeoutError, OSError, UnicodeDecodeError):
         return False, None
+
+
+def _peer_ttyd_url(base_url: str, port: object) -> str | None:
+    """Build a peer ttyd URL without appending a second port."""
+    try:
+        ttyd_port = int(port)
+    except (TypeError, ValueError):
+        return None
+    if ttyd_port < 1 or ttyd_port > 65535:
+        return None
+    try:
+        parsed = urlsplit(base_url)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    host = parsed.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    return urlunsplit((parsed.scheme, f"{host}:{ttyd_port}", "/", "", ""))
+
+
+def h_peer_proxy(handler: "Handler", _parsed: ParseResult, body: dict) -> None:
+    """Relay a constrained session action to a live paired peer."""
+    if not handler._check_unlock():
+        return
+    raw_did = body.get("device_id")
+    raw_path = body.get("path")
+    did = raw_did.strip() if isinstance(raw_did, str) else ""
+    path = raw_path.strip() if isinstance(raw_path, str) else ""
+    payload = body.get("body", {})
+    if not did:
+        handler._send_json({"ok": False, "error": "missing 'device_id'"}, status=400)
+        return
+    if path not in _PROXY_POST_PATHS:
+        handler._send_json({"ok": False, "error": "peer action not allowed"}, status=400)
+        return
+    if not isinstance(payload, dict):
+        handler._send_json({"ok": False, "error": "peer action body must be an object"},
+                           status=400)
+        return
+    if not fed_store.is_paired(did):
+        handler._send_json({"ok": False, "error": "peer is not paired"}, status=403)
+        return
+    peer = next((p for p in federation.list_peers() if p.device_id == did), None)
+    if peer is None:
+        handler._send_json({"ok": False, "error": "peer not currently visible"},
+                           status=404)
+        return
+    headers = getattr(handler, "headers", {})
+    raw_unlock = headers.get("X-TB-Unlock-Token")
+    unlock = raw_unlock.strip() if isinstance(raw_unlock, str) else ""
+    ok, response = _post_to_peer(
+        peer.base_url,
+        path,
+        payload,
+        unlock_token=unlock or None,
+    )
+    if not ok or response is None:
+        handler._send_json(
+            response or {"ok": False, "error": "peer did not respond"},
+            status=502,
+        )
+        return
+    if path == "/api/ttyd/start" and response.get("ok") and not response.get("url"):
+        ttyd_url = _peer_ttyd_url(peer.base_url, response.get("port"))
+        if ttyd_url:
+            response = dict(response)
+            response["url"] = ttyd_url
+    handler._send_json(response)
 
 
 def h_pair_request_out(handler: "Handler", _parsed: ParseResult, body: dict) -> None:
@@ -322,6 +423,7 @@ def register() -> Registration:
         "/api/peers/pair-accept":           h_pair_accept,
         "/api/peers/pair-decline":          h_pair_decline,
         "/api/peers/unpair":                h_unpair,
+        "/api/peers/proxy":                 h_peer_proxy,
     })
     # Session post-processor: core calls this at the end of
     # ``_session_summary`` (when ``merge_peers=True``) to fan out

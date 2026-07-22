@@ -74,6 +74,23 @@ class PeerInfo:
 _peers: dict[str, PeerInfo] = {}
 _peers_lock = threading.Lock()
 
+# Dashboard bearer token used for server-to-server federation requests.  The
+# startup hook copies it from DashboardServer; it never appears in beacons or
+# persisted federation state.
+_dashboard_auth_token: str | None = None
+_dashboard_auth_lock = threading.Lock()
+
+
+def set_dashboard_auth_token(token: str | None) -> None:
+    global _dashboard_auth_token
+    with _dashboard_auth_lock:
+        _dashboard_auth_token = token or None
+
+
+def get_dashboard_auth_token() -> str | None:
+    with _dashboard_auth_lock:
+        return _dashboard_auth_token
+
 
 def list_peers(now: int | None = None) -> list[PeerInfo]:
     """Live peers — everything still inside the TTL window."""
@@ -211,11 +228,15 @@ def _listener(my_device_id: str, stop: threading.Event) -> None:
                 # peer list.
                 continue
             try:
+                dashboard_port = int(msg.get("dashboard_port", 8096))
+                scheme = str(msg.get("scheme", "http")).lower()
+                if not 1 <= dashboard_port <= 65535 or scheme not in {"http", "https"}:
+                    continue
                 upsert_peer(PeerInfo(
                     device_id=did,
                     hostname=str(msg.get("hostname", "unknown"))[:64],
-                    dashboard_port=int(msg.get("dashboard_port", 8096)),
-                    scheme=str(msg.get("scheme", "http")),
+                    dashboard_port=dashboard_port,
+                    scheme=scheme,
                     version=str(msg.get("version", "?"))[:32],
                     last_seen=int(time.time()),
                     addr=addr,

@@ -33,6 +33,9 @@ def _start_federation(httpd) -> None:
     bind = getattr(httpd, "server_address", ("", 8096))
     port = bind[1]
     scheme = "https" if getattr(httpd, "tls_paths", None) else "http"
+    federation.set_dashboard_auth_token(
+        getattr(httpd, "expected_token", None),
+    )
     try:
         _stop_event = federation.start_federation(
             dashboard_port=port, scheme=scheme,
@@ -48,3 +51,4 @@ def _stop_federation() -> None:
     if _stop_event is not None:
         _stop_event.set()
         _stop_event = None
+    federation.set_dashboard_auth_token(None)

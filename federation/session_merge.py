@@ -39,6 +39,9 @@ def _fetch_peer_sessions(base_url: str, timeout: float = _PEER_FETCH_TIMEOUT_SEC
     """
     url = f"{base_url}/api/sessions?local=1"
     req = urllib.request.Request(url)
+    token = federation.get_dashboard_auth_token()
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -80,10 +83,13 @@ def merge_peer_sessions(out: list[dict]) -> None:
             # sessions get federated; otherwise the same row would
             # appear under multiple hostname prefixes as the graph
             # walks itself.
-            if row.get("device_id"):
+            if not isinstance(row, dict) or row.get("peer_url"):
                 continue
-            row["name"] = f"{peer.hostname}:{row.get('name', '')}"
-            row["device_id"] = peer.device_id
-            row["peer_url"] = peer.base_url
-            row["peer_hostname"] = peer.hostname
-            out.append(row)
+            remote = dict(row)
+            remote_name = str(remote.get("name", ""))
+            remote["name"] = f"{peer.hostname}:{remote_name}"
+            remote["peer_session_name"] = remote_name
+            remote["device_id"] = peer.device_id
+            remote["peer_url"] = peer.base_url
+            remote["peer_hostname"] = peer.hostname
+            out.append(remote)

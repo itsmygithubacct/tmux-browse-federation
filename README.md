@@ -24,9 +24,10 @@ machines on your LAN, this is what you want.
   `lib.host_identity` so the dashboard can tag local rows with
   the same fields it tags remote rows even when this extension is
   not installed.
-- `federation/routes.py` — `/api/peers` + `/api/peers/pair-*`
-  HTTP handlers, registered through the core extension loader
-  (manifest's ``routes_entry: federation.routes:register``).
+- `federation/routes.py` — `/api/peers`, `/api/peers/pair-*`, and the
+  allowlisted `/api/peers/proxy` session-action relay, registered through
+  the core extension loader (manifest's
+  ``routes_entry: federation.routes:register``).
 - `federation/session_merge.py` — fan-out to paired peers and
   merge their `/api/sessions` rows into the local response. Wired
   in via the ``session_post_processors`` hook returned by
@@ -68,14 +69,19 @@ happen. After accept:
 - Each side's dashboard fetches the other's `/api/sessions?local=1`
   on every refresh tick (5 s default). Failures are silent: a
   sluggish peer just doesn't contribute rows for that tick.
+- Browser actions on a remote pane go to the local dashboard first;
+  it relays only supported ttyd/session actions to the paired peer.
 - Unpairing is one-sided: removing a peer here doesn't tell them.
   The next session-fetch from their side will simply succeed-and-
   show-nothing if they unpaired you, or continue showing your rows
   if they didn't.
 
-For a hardened perimeter (multiple users, untrusted devices, public
-network) put a reverse proxy in front of each dashboard. Federation
-is designed for trusted LANs.
+When dashboard authentication is enabled, every federated host must use the
+same bearer token. Server-to-server session fetches, pairing calls, and action
+relays send that token in the `Authorization` header. A mismatched token makes
+the peer appear offline. For a hardened perimeter (multiple users, untrusted
+devices, public network) put a reverse proxy in front of each dashboard.
+Federation is designed for trusted LANs.
 
 See [`docs/federation.md`](https://github.com/itsmygithubacct/tmux-browse/blob/main/docs/federation.md)
 in the host repo for the full pairing flow, ports, and operational
