@@ -2,6 +2,8 @@
 
 - ``GET /api/peers`` — every discovered peer with its pairing status
   (paired / request-sent / request-pending / discovered).
+- ``GET /api/peers/session-log`` — fetch a paired peer's plain-text
+  scrollback and escape/render it on the local origin.
 - ``POST /api/peers/pair-request`` — incoming: a peer is asking to
   pair with us. We record it as pending and surface it to the
   operator; the request body and source IP are saved for the
@@ -41,7 +43,7 @@ import json
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
-from urllib.parse import ParseResult, urlsplit, urlunsplit
+from urllib.parse import ParseResult, parse_qs, urlencode, urlsplit, urlunsplit
 
 import federation
 from federation import store as fed_store
@@ -57,6 +59,7 @@ if TYPE_CHECKING:
 # host. Kept tight so a stalled peer doesn't hang the operator's
 # Accept/Reject UI.
 _PAIR_REQ_TIMEOUT_SEC = 3.0
+_PEER_LOG_MAX_BYTES = 5 * 1024 * 1024
 
 _PROXY_POST_PATHS = frozenset({
     "/api/ttyd/start",
@@ -216,8 +219,7 @@ def h_pair_accept_callback(handler: "Handler", _parsed: ParseResult, body: dict)
 
 
 def _post_to_peer(base_url: str, path: str, payload: dict,
-                  timeout: float = _PAIR_REQ_TIMEOUT_SEC,
-                  unlock_token: str | None = None) -> tuple[bool, dict | None]:
+                  timeout: float = _PAIR_REQ_TIMEOUT_SEC) -> tuple[bool, dict | None]:
     """Best-effort POST helper; returns (ok, parsed_body)."""
     try:
         parsed_base = urlsplit(base_url)
@@ -232,8 +234,6 @@ def _post_to_peer(base_url: str, path: str, payload: dict,
     token = federation.get_dashboard_auth_token()
     if token:
         req.add_header("Authorization", f"Bearer {token}")
-    if unlock_token:
-        req.add_header("X-TB-Unlock-Token", unlock_token)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")
@@ -299,15 +299,10 @@ def h_peer_proxy(handler: "Handler", _parsed: ParseResult, body: dict) -> None:
         handler._send_json({"ok": False, "error": "peer not currently visible"},
                            status=404)
         return
-    headers = getattr(handler, "headers", {})
-    raw_unlock = headers.get("X-TB-Unlock-Token")
-    unlock = raw_unlock.strip() if isinstance(raw_unlock, str) else ""
-    ok, response = _post_to_peer(
-        peer.base_url,
-        path,
-        payload,
-        unlock_token=unlock or None,
-    )
+    # Config-lock unlock tokens are host-local capabilities. Never disclose
+    # the caller's token to a peer: it cannot unlock the remote process and a
+    # compromised peer could replay it against this dashboard.
+    ok, response = _post_to_peer(peer.base_url, path, payload)
     if not ok or response is None:
         handler._send_json(
             response or {"ok": False, "error": "peer did not respond"},
@@ -320,6 +315,65 @@ def h_peer_proxy(handler: "Handler", _parsed: ParseResult, body: dict) -> None:
             response = dict(response)
             response["url"] = ttyd_url
     handler._send_json(response)
+
+
+def h_peer_session_log(handler: "Handler", parsed: ParseResult) -> None:
+    """Fetch a paired peer's plain-text log and render it locally.
+
+    Serving locally keeps the browser same-origin (so peer dashboard cookies
+    are unnecessary) while escaping the peer response before it becomes HTML.
+    """
+    query = parse_qs(parsed.query)
+    did = (query.get("device_id", [""])[0] or "").strip()
+    session = (query.get("session", [""])[0] or "").strip()
+    if not did or not session:
+        handler._send_text("missing peer or session", status=400)
+        return
+    if not fed_store.is_paired(did):
+        handler._send_text("peer is not paired", status=403)
+        return
+    peer = next((p for p in federation.list_peers() if p.device_id == did), None)
+    if peer is None:
+        handler._send_text("peer not currently visible", status=404)
+        return
+    try:
+        lines = int(query.get("lines", ["2000"])[0])
+    except (TypeError, ValueError):
+        lines = 2000
+    lines = max(1, min(lines, 50000))
+    url = peer.base_url.rstrip("/") + "/api/session/log?" + urlencode({
+        "session": session,
+        "lines": lines,
+    })
+    request = urllib.request.Request(url)
+    token = federation.get_dashboard_auth_token()
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=_PAIR_REQ_TIMEOUT_SEC) as response:
+            raw = response.read(_PEER_LOG_MAX_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        try:
+            message = exc.read(4096).decode("utf-8", "replace")
+        except OSError:
+            message = "peer log request failed"
+        handler._send_text(message or "peer log request failed", status=exc.code)
+        return
+    except (urllib.error.URLError, TimeoutError, OSError):
+        handler._send_text("peer did not respond", status=502)
+        return
+    if len(raw) > _PEER_LOG_MAX_BYTES:
+        handler._send_text("peer log response too large", status=502)
+        return
+    content = raw.decode("utf-8", "replace")
+    as_html = (query.get("html", ["0"])[0] or "0").strip().lower() in {
+        "1", "true", "yes",
+    }
+    if as_html:
+        from lib.server import _log_html
+        handler._send_html(_log_html(session, content))
+    else:
+        handler._send_text(content)
 
 
 def h_pair_request_out(handler: "Handler", _parsed: ParseResult, body: dict) -> None:
@@ -415,6 +469,7 @@ def register() -> Registration:
     reg = Registration(name="federation")
     reg.get_routes.update({
         "/api/peers": h_peers,
+        "/api/peers/session-log": h_peer_session_log,
     })
     reg.post_routes.update({
         "/api/peers/pair-request":          h_pair_request,

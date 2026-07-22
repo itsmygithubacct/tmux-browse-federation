@@ -1,6 +1,6 @@
 {
     "name": "federation",
-    "version": "0.7.6.2",
+    "version": "0.7.6.3",
     "module": "federation",
     "min_tmux_browse": "0.7.6",
     "routes_entry": "federation.routes:register",

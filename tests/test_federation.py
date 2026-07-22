@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 from urllib.error import URLError
+from urllib.parse import urlparse
 
 # Layout: <core_repo>/extensions/federation/tests/test_federation.py
 # parents[3] is the host repo; its ``tmux-cli`` submodule provides
@@ -378,7 +379,8 @@ class AggregationGatedOnPairing(unittest.TestCase):
             session_merge.merge_peer_sessions(out)
             fake_fetch.assert_called_once()
         self.assertEqual(len(out), 1)
-        self.assertEqual(out[0]["name"], "x:remote-foo")
+        self.assertEqual(out[0]["name"], "peer:paired-x:remote-foo")
+        self.assertEqual(out[0]["display_name"], "x:remote-foo")
         self.assertEqual(out[0]["peer_session_name"], "remote-foo")
         self.assertEqual(out[0]["device_id"], "paired-x")
         self.assertEqual(source_row["name"], "remote-foo")
@@ -399,6 +401,27 @@ class AggregationGatedOnPairing(unittest.TestCase):
         ):
             session_merge.merge_peer_sessions(out)
         self.assertEqual(out, [])
+
+    def test_duplicate_hostnames_produce_distinct_session_keys(self):
+        from federation import session_merge
+        for did, addr in (("peer-a", "10.0.0.1"), ("peer-b", "10.0.0.2")):
+            federation.upsert_peer(federation.PeerInfo(
+                device_id=did, hostname="node",
+                dashboard_port=8096, scheme="http",
+                version="t", last_seen=int(time.time()), addr=addr,
+            ))
+            self.fed_store.add_paired(did, "node")
+        out: list[dict] = []
+        with mock.patch(
+            "federation.session_merge._fetch_peer_sessions",
+            return_value=[{"name": "work"}],
+        ):
+            session_merge.merge_peer_sessions(out)
+
+        self.assertEqual(len(out), 2)
+        self.assertEqual({row["display_name"] for row in out}, {"node:work"})
+        self.assertEqual(len({row["name"] for row in out}), 2)
+        self.assertEqual({row["device_id"] for row in out}, {"peer-a", "peer-b"})
 
 
 class PeerProxyTests(unittest.TestCase):
@@ -437,6 +460,14 @@ class PeerProxyTests(unittest.TestCase):
             self.payload = payload
             self.status = status
 
+        def _send_text(self, payload, status=200):
+            self.payload = payload
+            self.status = status
+
+        def _send_html(self, payload, status=200):
+            self.payload = payload
+            self.status = status
+
     def _peer(self):
         peer = federation.PeerInfo(
             device_id="paired-x", hostname="alpha",
@@ -466,7 +497,6 @@ class PeerProxyTests(unittest.TestCase):
             peer.base_url,
             "/api/ttyd/start",
             {"session": "work"},
-            unlock_token="local-unlock",
         )
         self.assertEqual(handler.status, 200)
         self.assertEqual(handler.payload["url"], "http://10.0.0.9:7704/")
@@ -496,7 +526,7 @@ class PeerProxyTests(unittest.TestCase):
         })
         self.assertEqual(handler.status, 403)
 
-    def test_post_to_peer_forwards_auth_and_unlock_headers(self):
+    def test_post_to_peer_forwards_auth_but_not_local_unlock_token(self):
         from federation import routes
         fake = mock.MagicMock()
         fake.read.return_value = b'{"ok": true}'
@@ -511,15 +541,44 @@ class PeerProxyTests(unittest.TestCase):
                 "http://10.0.0.9:8096",
                 "/api/session/kill",
                 {"session": "work"},
-                unlock_token="unlock-token",
             )
         request = open_url.call_args.args[0]
         self.assertTrue(ok)
         self.assertEqual(response, {"ok": True})
         self.assertEqual(request.get_header("Authorization"),
                          "Bearer shared-secret")
-        self.assertEqual(request.get_header("X-tb-unlock-token"),
-                         "unlock-token")
+        self.assertIsNone(request.get_header("X-tb-unlock-token"))
+
+    def test_peer_log_is_fetched_with_auth_and_html_escaped_locally(self):
+        from federation import routes
+        peer = self._peer()
+        fake = mock.MagicMock()
+        fake.read.return_value = b"<script>alert(1)</script>\n"
+        fake.__enter__ = lambda self: self
+        fake.__exit__ = lambda self, *a: False
+        federation.set_dashboard_auth_token("shared-secret")
+        handler = self.Handler()
+        with mock.patch(
+            "federation.routes.urllib.request.urlopen",
+            return_value=fake,
+        ) as open_url:
+            routes.h_peer_session_log(
+                handler,
+                urlparse(
+                    "/api/peers/session-log?device_id=paired-x"
+                    "&session=work&html=1",
+                ),
+            )
+
+        request = open_url.call_args.args[0]
+        self.assertIn("/api/session/log?", request.full_url)
+        self.assertIn("session=work", request.full_url)
+        self.assertEqual(
+            request.get_header("Authorization"), "Bearer shared-secret",
+        )
+        self.assertEqual(handler.status, 200)
+        self.assertIn("&lt;script&gt;", handler.payload)
+        self.assertNotIn("<script>alert(1)</script>", handler.payload)
 
 
 if __name__ == "__main__":

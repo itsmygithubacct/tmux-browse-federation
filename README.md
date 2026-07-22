@@ -24,9 +24,10 @@ machines on your LAN, this is what you want.
   `lib.host_identity` so the dashboard can tag local rows with
   the same fields it tags remote rows even when this extension is
   not installed.
-- `federation/routes.py` — `/api/peers`, `/api/peers/pair-*`, and the
-  allowlisted `/api/peers/proxy` session-action relay, registered through
-  the core extension loader (manifest's
+- `federation/routes.py` — `/api/peers`, `/api/peers/pair-*`, the
+  allowlisted `/api/peers/proxy` session-action relay, and the safe
+  same-origin peer-log relay, registered through the core extension loader
+  (manifest's
   ``routes_entry: federation.routes:register``).
 - `federation/session_merge.py` — fan-out to paired peers and
   merge their `/api/sessions` rows into the local response. Wired
@@ -71,6 +72,7 @@ happen. After accept:
   sluggish peer just doesn't contribute rows for that tick.
 - Browser actions on a remote pane go to the local dashboard first;
   it relays only supported ttyd/session actions to the paired peer.
+  Host-local config-lock unlock tokens are never forwarded.
 - Unpairing is one-sided: removing a peer here doesn't tell them.
   The next session-fetch from their side will simply succeed-and-
   show-nothing if they unpaired you, or continue showing your rows

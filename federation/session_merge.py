@@ -14,6 +14,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 
 import federation
 from federation import store as fed_store
@@ -87,7 +88,15 @@ def merge_peer_sessions(out: list[dict]) -> None:
                 continue
             remote = dict(row)
             remote_name = str(remote.get("name", ""))
-            remote["name"] = f"{peer.hostname}:{remote_name}"
+            # ``name`` is the dashboard's identity key, not merely a label.
+            # Hostnames are neither unique nor authenticated, so include the
+            # full device id and encode both components unambiguously. Keep the
+            # friendly hostname form separately for rendering.
+            remote["name"] = (
+                f"peer:{quote(peer.device_id, safe='')}:"
+                f"{quote(remote_name, safe='')}"
+            )
+            remote["display_name"] = f"{peer.hostname}:{remote_name}"
             remote["peer_session_name"] = remote_name
             remote["device_id"] = peer.device_id
             remote["peer_url"] = peer.base_url
